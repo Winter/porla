@@ -34,7 +34,7 @@ void ContentsHandler::operator()(uWS::HttpResponse<false> *res, uWS::HttpRequest
 
     // Get our file_index parameter and try to safely parse it to an integer.
     std::string_view file_index_view(req->getParameter(1));
-    int file_index;
+    uint file_index;
     std::from_chars_result file_index_result =
         std::from_chars(file_index_view.data(), file_index_view.data() + file_index_view.size(), file_index);
 
@@ -60,19 +60,29 @@ void ContentsHandler::operator()(uWS::HttpResponse<false> *res, uWS::HttpRequest
         return;
     }
 
-    // Query libtorrent for only our save_path, we don't want the other data.
-    auto status = it->second.status(it->second.query_save_path);
-
     res->onAborted([]() { 
         BOOST_LOG_TRIVIAL(fatal) << "Request was aborted";
     });
 
+    // Get our torrent information
+    auto info = it->second.torrent_file();
+
+    // Check if our file index is valid
+    if (file_index > info->num_files() - 1)
+    {
+        res->writeStatus("400 Bad Request")->end();
+        return;
+    }
+
+    // Take our file_index and get the path. 
+    fs::path file_path(info->files().file_path(libtorrent::file_index_t(file_index)));
+
+    // Query libtorrent for only our save_path, we don't want the other data.
+    auto status = it->second.status(it->second.query_save_path);
+
     // Boost documents an abstraction but doesn't seem to work.
     // So will need to work a solution that works on all platforms.
-    // Sidenote, this gets the raw save path and doesn't exactly work
-    // at the moment. But replacing the path with a large file say
-    // 10GB works and the rest of porla still works.
-    int fd = open(status.save_path.c_str(), O_RDONLY);
+    auto fd = open((fs::path(status.save_path) / file_path).c_str(), O_RDONLY);
     auto descriptor = std::make_shared<boost::asio::posix::stream_descriptor>(m_io, fd);
     auto buffer = std::make_shared<std::vector<char>>(1024 * 1024); // 1 MB Buffer
 
