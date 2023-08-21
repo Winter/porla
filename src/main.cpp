@@ -17,6 +17,7 @@
 
 #include "http/authinithandler.hpp"
 #include "http/authloginhandler.hpp"
+#include "http/contentshandler.hpp"
 #include "http/eventshandler.hpp"
 #include "http/jsonrpchandler.hpp"
 #include "http/jwthandler.hpp"
@@ -215,6 +216,8 @@ int main(int argc, char* argv[])
                 : static_cast<porla::Http::Handler>(rpc));
 
         http_server.get(http_base_path + "/api/v1/system", porla::Http::SystemHandler(cfg->db));
+
+        http_server.get(http_base_path + "/api/v1/contents/:hash/:index", porla::Http::ContentsHandler(io, sessions));
 
         if (cfg->http_metrics_enabled.value_or(true))
         {

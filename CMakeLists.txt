@@ -137,6 +137,7 @@ add_library(
     src/http/metricshandler.cpp
     src/http/systemhandler.cpp
     src/http/webuihandler.cpp
+    src/http/contentshandler.cpp
 
     src/lua/packages/config.cpp
     src/lua/packages/cron.cpp
