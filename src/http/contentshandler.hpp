@@ -21,14 +21,12 @@ namespace porla::Http
     public:
         explicit ContentsHandler(boost::asio::io_context &io, Sessions &sessions);
 
-        void send_file_async(uWS::HttpResponse<false> *res, const std::string &path);
+        void send_file_chunked(uWS::HttpResponse<false> *res, int fd, std::shared_ptr<boost::asio::posix::stream_descriptor> descriptor, std::shared_ptr<std::vector<char>> buffer);
 
-        void
-            operator()(uWS::HttpResponse<false> *res, uWS::HttpRequest *req);
+        void operator()(uWS::HttpResponse<false> *res, uWS::HttpRequest *req);
 
     private:
         boost::asio::io_context &m_io;
-        boost::asio::strand<boost::asio::io_context::executor_type> m_strand;
         Sessions &m_sessions;
     };
 }

@@ -1,21 +1,8 @@
 #include "contentshandler.hpp"
 
-#include <filesystem>
-#include <regex>
-
 #include <boost/asio.hpp>
-#include <boost/asio/basic_file.hpp>
-#include <boost/asio/co_spawn.hpp>
-#include <boost/asio/detached.hpp>
-#include <boost/asio/post.hpp>
-#include <boost/asio/use_awaitable.hpp>
-#include <boost/filesystem.hpp>
 #include <boost/log/trivial.hpp>
-#include <fstream>
 #include <libtorrent/hex.hpp>
-#include <thread>
-#include <utility>
-#include <zip.h>
 
 #include "../sessions.hpp"
 
@@ -23,7 +10,7 @@ namespace fs = std::filesystem;
 using porla::Http::ContentsHandler;
 
 ContentsHandler::ContentsHandler(boost::asio::io_context &io, Sessions &sessions)
-    : m_io(io), m_sessions(sessions), m_strand(boost::asio::make_strand(io))
+    : m_io(io), m_sessions(sessions)
 {
 }
 
@@ -76,45 +63,32 @@ void ContentsHandler::operator()(uWS::HttpResponse<false> *res, uWS::HttpRequest
     // Query libtorrent for only our save_path, we don't want the other data.
     auto status = it->second.status(it->second.query_save_path);
 
-    send_file_async(res, status.save_path);
-}
-
-// Doesn't actually work without blocking the main thread.. 
-// Will maybe need to try another approach. Was just a first attempt.
-void ContentsHandler::send_file_async(uWS::HttpResponse<false> *res, const std::string &path)
-{
-    auto file = std::make_shared<std::ifstream>(path, std::ios::binary);
-
-    if (!file->is_open())
-    {
-        res->writeStatus("500 Internal Server Error")->end();
-        return;
-    }
-
-    // uWS complains without this
     res->onAborted([]() { 
-        std::cout << "Request was aborted before response was completed." << std::endl; 
+        BOOST_LOG_TRIVIAL(fatal) << "Request was aborted";
     });
 
-    std::thread([this, res, file]
+    // Boost documents an abstraction but doesn't seem to work.
+    // So will need to work a solution that works on all platforms.
+    // Sidenote, this gets the raw save path and doesn't exactly work
+    // at the moment. But replacing the path with a large file say
+    // 10GB works and the rest of porla still works.
+    int fd = open(status.save_path.c_str(), O_RDONLY);
+    auto descriptor = std::make_shared<boost::asio::posix::stream_descriptor>(m_io, fd);
+    auto buffer = std::make_shared<std::vector<char>>(1024 * 1024); // 1 MB Buffer
+
+    send_file_chunked(res, fd, descriptor, buffer);
+}
+
+void ContentsHandler::send_file_chunked(uWS::HttpResponse<false> *res, int fd, std::shared_ptr<boost::asio::posix::stream_descriptor> descriptor, std::shared_ptr<std::vector<char>> buffer)
+{
+    descriptor->async_read_some(boost::asio::buffer(*buffer), [this, res, fd, descriptor, buffer](auto ec, auto length)
     {
-        std::array<char, 8192> buffer;  // 8 KB buffer
-
-        while (file->read(buffer.data(), buffer.size()) || file->gcount() != 0) {
-            std::size_t bytes_read = file->gcount();
-            
-            auto buffer_copy = std::make_shared<std::array<char, 8192>>(buffer);
-
-            boost::asio::post(m_strand, [res, buffer_copy, bytes_read] {
-                res->write(std::string_view(buffer_copy->data(), bytes_read));
-            });
-        }
-
-        boost::asio::post(m_strand, [res] {
+        if (!ec && length > 0) {
+            res->write(std::string_view(buffer->data(), length));
+            send_file_chunked(res, fd, descriptor, buffer);
+        } else {
+            close(fd);
             res->end();
-        });
-
-        file->close(); 
-    })
-    .detach();
+        } 
+    });
 }
